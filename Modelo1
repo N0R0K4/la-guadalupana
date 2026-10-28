@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planta 3D Interativa - Power BI</title>
+    <!-- Three.js e OrbitControls via CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body, html { width: 100%; height: 100%; overflow: hidden; background-color: #eef2f5; }
+
+        /* Container Principal */
+        #app-container { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+
+        /* Barra Superior de KPIs */
+        .kpi-bar {
+            position: absolute; top: 12px; left: 12px; right: 12px; z-index: 10;
+            display: flex; gap: 10px; pointer-events: none;
+        }
+        .kpi-card {
+            background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(8px);
+            border-radius: 8px; padding: 10px 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            pointer-events: auto; min-width: 130px; border-left: 4px solid #0078d4;
+        }
+        .kpi-title { font-size: 10px; font-weight: 700; color: #605e5c; text-transform: uppercase; }
+        .kpi-value { font-size: 18px; font-weight: 800; color: #201f1e; margin-top: 2px; }
+        .kpi-sub { font-size: 10px; color: #8a8886; }
+
+        /* Canvas 3D */
+        #webgl-canvas { width: 100%; height: 100%; display: block; }
+
+        /* Painel Lateral Direita (Lote & Status) */
+        .side-panel {
+            position: absolute; top: 80px; right: 12px; width: 320px; z-index: 10;
+            display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+        }
+        .panel-card {
+            background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(8px);
+            border-radius: 10px; padding: 14px; box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+            pointer-events: auto;
+        }
+        .panel-header { font-size: 12px; font-weight: 800; color: #323130; border-bottom: 2px solid #f3f2f1; padding-bottom: 6px; margin-bottom: 8px; }
+
+        /* Tabela de Etapas */
+        .status-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        .status-table th { text-align: left; color: #605e5c; padding-bottom: 4px; }
+        .status-table td { padding: 5px 0; border-bottom: 1px solid #f3f2f1; }
+        .badge { padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 9px; }
+        .badge-atrasado { background: #fde7e9; color: #a80000; }
+        .badge-ok { background: #dff6dd; color: #107c41; }
+        .badge-progresso { background: #deecf9; color: #005a9e; }
+
+        /* Painel Inferior de Rastreamento */
+        .bottom-panel {
+            position: absolute; bottom: 12px; left: 12px; width: 420px; z-index: 10;
+            background: rgba(255, 255, 255, 0.95); border-radius: 10px; padding: 12px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+        }
+        .timeline { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; position: relative; }
+        .timeline-node { display: flex; flex-direction: column; align-items: center; font-size: 9px; font-weight: 600; color: #605e5c; z-index: 2; }
+        .dot { width: 14px; height: 14px; border-radius: 50%; background: #0078d4; border: 2px solid #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .dot.completed { background: #107c41; }
+        .timeline-line { position: absolute; top: 7px; left: 10px; right: 10px; height: 2px; background: #c8c6c4; z-index: 1; }
+
+        /* Tooltip flutuante do 3D */
+        #tooltip {
+            position: absolute; display: none; background: #201f1e; color: #fff;
+            padding: 6px 10px; border-radius: 4px; font-size: 11px; font-weight: 600;
+            pointer-events: none; z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+
+<div id="app-container">
+    <!-- Tooltip 3D -->
+    <div id="tooltip"></div>
+
+    <!-- Barra de KPIs Superior -->
+    <div class="kpi-bar">
+        <div class="kpi-card">
+            <div class="kpi-title">Estoque Insumos</div>
+            <div class="kpi-value" id="kpi-estoque">1.500</div>
+            <div class="kpi-sub">Pallets em Uso: 300</div>
+        </div>
+        <div class="kpi-card" style="border-left-color: #107c41;">
+            <div class="kpi-title">Caminhões Chegada</div>
+            <div class="kpi-value" id="kpi-caminhoes">4</div>
+            <div class="kpi-sub">Em descarregamento: 2</div>
+        </div>
+        <div class="kpi-card" style="border-left-color: #ff8c00;">
+            <div class="kpi-title">Produção Diária</div>
+            <div class="kpi-value" id="kpi-producao">15.000 L</div>
+            <div class="kpi-sub">Suco: 11kL | Refri: 4kL</div>
+        </div>
+        <div class="kpi-card" style="border-left-color: #d13438;">
+            <div class="kpi-title">Pedidos em Prep.</div>
+            <div class="kpi-value" id="kpi-pedidos">7</div>
+            <div class="kpi-sub">Atrasos: 1</div>
+        </div>
+    </div>
+
+    <!-- Painel Lateral -->
+    <div class="side-panel">
+        <div class="panel-card">
+            <div class="panel-header">PAINEL DE LOTE #PRD-987</div>
+            <div style="font-size: 11px; line-height: 1.6; color: #323130;">
+                <strong>Status:</strong> <span class="badge badge-progresso">Em Processo</span><br>
+                <strong>Produto:</strong> Suco Natural 10L<br>
+                <strong>Cliente:</strong> Casa&Lar (São José dos Campos)<br>
+                <strong>Início / Fim:</strong> 17:30 - 17:37
+            </div>
+        </div>
+
+        <div class="panel-card">
+            <div class="panel-header">STATUS DAS ETAPAS</div>
+            <table class="status-table">
+                <thead>
+                    <tr><th>Doca</th><th>Etapa</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                    <tr onclick="highlightZone('lavagem')"><td>D4</td><td>Lavagem Insumos</td><td><span class="badge badge-atrasado">Atrasado</span></td></tr>
+                    <tr onclick="highlightZone('extracao')"><td>D1</td><td>Extração do Suco</td><td><span class="badge badge-progresso">64%</span></td></tr>
+                    <tr onclick="highlightZone('tanque')"><td>D2</td><td>Resfriamento Tank</td><td><span class="badge badge-progresso">64%</span></td></tr>
+                    <tr onclick="highlightZone('freezer')"><td>D3</td><td>Congelamento</td><td><span class="badge badge-ok">Concluído</span></td></tr>
+                    <tr onclick="highlightZone('expedicao')"><td>D2</td><td>Expedição</td><td><span class="badge badge-ok">Livre</span></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Painel Inferior de Rastreamento -->
+    <div class="bottom-panel">
+        <div style="font-size: 11px; font-weight: 700; color: #323130;">RASTREAMENTO: REM-48190 <span class="badge badge-atrasado">Atrasada</span></div>
+        <div class="timeline">
+            <div class="timeline-line"></div>
+            <div class="timeline-node"><div class="dot completed"></div>Chegada</div>
+            <div class="timeline-node"><div class="dot completed"></div>Lavagem</div>
+            <div class="timeline-node"><div class="dot completed"></div>Extração</div>
+            <div class="timeline-node"><div class="dot"></div>Congelamento</div>
+            <div class="timeline-node"><div class="dot"></div>Expedição</div>
+            <div class="timeline-node"><div class="dot"></div>Entrega</div>
+        </div>
+    </div>
+
+    <!-- Canvas Three.js -->
+    <canvas id="webgl-canvas"></canvas>
+</div>
+
+<script>
+    // --- 1. CONFIGURAÇÃO DA CENA 3D (ISOMÉTRICA) ---
+    const canvas = document.getElementById('webgl-canvas');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xdce5ec);
+
+    // Câmera Ortográfica para Estilo Isométrico
+    const aspect = window.innerWidth / window.innerHeight;
+    const d = 28;
+    const camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
+    
+    // Posição isométrica clássica (45 graus)
+    camera.position.set(40, 40, 40);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    // Controles Orbitais (Rotação e Zoom)
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.maxPolarAngle = Math.PI / 2.2; // Limita para não ir abaixo do chão
+
+    // --- 2. ILUMINAÇÃO ---
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(50, 80, 30);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    scene.add(dirLight);
+
+    // --- 3. CONSTRUÇÃO DA PLANTA DA FÁBRICA ---
+    const interactiveObjects = [];
+    const animatedItems = [];
+
+    // Base/Chão Principal
+    const floorGeo = new THREE.BoxGeometry(42, 1, 38);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0xb0bec5, roughness: 0.4 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.position.y = -0.5;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // Helper para criar Paredes/Salas
+    function createRoom(name, x, z, w, d, color = 0xe0e0e0, height = 4) {
+        const wallMat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.3, transparent: true, opacity: 0.85 });
+        const roomGeo = new THREE.BoxGeometry(w, height, d);
+        const room = new THREE.Mesh(roomGeo, wallMat);
+        room.position.set(x, height / 2, z);
+        room.castShadow = true;
+        room.receiveShadow = true;
+        room.userData = { name: name };
+        scene.add(room);
+        interactiveObjects.push(room);
+        return room;
+    }
+
+    // Helper para Equipamentos
+    function createEquipment(name, x, z, w, h, d, color) {
+        const geo = new THREE.BoxGeometry(w, h, d);
+        const mat = new THREE.MeshStandardMaterial({ color: color, metalness: 0.5, roughness: 0.2 });
+        const eq = new THREE.Mesh(geo, mat);
+        eq.position.set(x, h / 2, z);
+        eq.castShadow = true;
+        eq.userData = { name: name };
+        scene.add(eq);
+        interactiveObjects.push(eq);
+        return eq;
+    }
+
+    // --- DIVISÃO DOS SETORES ---
+    // 1. Insumos e Embalagens (Esq/Topo)
+    createRoom("Estoque de Insumos", -12, -10, 12, 12, 0xd1e7dd);
+    createRoom("Estoque de Embalagens", -2, -12, 6, 8, 0xffecb3);
+
+    // Caixas/Pallets de Insumos
+    for(let i=0; i<6; i++) {
+        const box = new THREE.Mesh(
+            new THREE.BoxGeometry(1.8, 1.8, 1.8),
+            new THREE.MeshStandardMaterial({ color: 0xe67e22 })
+        );
+        box.position.set(-15 + (i%3)*2.5, 0.9, -13 + Math.floor(i/3)*2.5);
+        box.castShadow = true;
+        scene.add(box);
+    }
+
+    // 2. Lavagem & Extração / Fabricação de Refrigerante (Centro/Direita)
+    const lavagem = createEquipment("Lavagem de Insumos", 8, -10, 10, 2, 3, 0x3498db);
+    const extracao = createEquipment("Extração do Suco & Refrigerante", 12, 0, 12, 3, 4, 0x2ecc71);
+
+    // Tanques de Resfriamento
+    const tankGeo = new THREE.CylinderGeometry(2, 2, 5, 32);
+    const tankMat = new THREE.MeshStandardMaterial({ color: 0x95a5a6, metalness: 0.8, roughness: 0.1 });
+    const tank = new THREE.Mesh(tankGeo, tankMat);
+    tank.position.set(12, 2.5, 10);
+    tank.castShadow = true;
+    tank.userData = { name: "Tanque Resfriador" };
+    scene.add(tank);
+    interactiveObjects.push(tank);
+
+    // Esteira Animada (Conveyor Line)
+    const conveyorGeo = new THREE.BoxGeometry(1, 0.4, 20);
+    const conveyorMat = new THREE.MeshStandardMaterial({ color: 0x34495e });
+    const conveyor = new THREE.Mesh(conveyorGeo, conveyorMat);
+    conveyor.position.set(6, 0.2, 0);
+    scene.add(conveyor);
+
+    // Garrafas/Frutas subindo na esteira (Animação)
+    for(let i=0; i<5; i++) {
+        const bottle = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.2, 0.2, 0.8, 12),
+            new THREE.MeshStandardMaterial({ color: 0xf1c40f })
+        );
+        bottle.position.set(6, 0.8, -8 + (i * 4));
+        scene.add(bottle);
+        animatedItems.push(bottle);
+    }
+
+    // 3. Freezer / Produto Acabado
+    createRoom("Freezer / Produto Acabado", -10, 4, 10, 10, 0xbbdefb);
+
+    // 4. Expedição & Administrativo (Frente)
+    createRoom("Administrativo", -4, 14, 8, 6, 0xffe0b2);
+    createRoom("Expedição", -12, 14, 7, 6, 0xc8e6c9);
+
+    // Caminhão de Carga na Expedição
+    const truckCabin = new THREE.Mesh(
+        new THREE.BoxGeometry(3, 3, 3),
+        new THREE.MeshStandardMaterial({ color: 0xe74c3c })
+    );
+    truckCabin.position.set(-18, 1.5, 15);
+    scene.add(truckCabin);
+
+    const truckContainer = new THREE.Mesh(
+        new THREE.BoxGeometry(3.2, 3.5, 7),
+        new THREE.MeshStandardMaterial({ color: 0xecf0f1 })
+    );
+    truckContainer.position.set(-18, 1.75, 10);
+    scene.add(truckContainer);
+
+    // --- 4. RAYCASTING PARA INTERATIVIDADE (HOVER E CLIQUE) ---
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    const tooltip = document.getElementById('tooltip');
+
+    window.addEventListener('mousemove', (e) => {
+        mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(interactiveObjects);
+
+        if (intersects.length > 0) {
+            const obj = intersects[0].object;
+            tooltip.style.display = 'block';
+            tooltip.style.left = e.clientX + 12 + 'px';
+            tooltip.style.top = e.clientY + 12 + 'px';
+            tooltip.innerHTML = `<strong>${obj.userData.name}</strong><br>Clique para filtrar no Power BI`;
+            document.body.style.cursor = 'pointer';
+        } else {
+            tooltip.style.display = 'none';
+            document.body.style.cursor = 'default';
+        }
+    });
+
+    // Evento de Clique -> Comunicação com o Power BI
+    window.addEventListener('click', () => {
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(interactiveObjects);
+
+        if (intersects.length > 0) {
+            const selectedZone = intersects[0].object.userData.name;
+            highlightObject(intersects[0].object);
+            
+            // DISPARO DE EVENTO PARA O POWER BI
+            sendPowerBiSelection(selectedZone);
+        }
+    });
+
+    let currentHighlighted = null;
+    function highlightObject(obj) {
+        if(currentHighlighted) currentHighlighted.material.emissive.setHex(0x000000);
+        currentHighlighted = obj;
+        if(obj.material.emissive) {
+            obj.material.emissive.setHex(0x0078d4);
+        }
+    }
+
+    function highlightZone(zoneKey) {
+        const target = interactiveObjects.find(o => o.userData.name.toLowerCase().includes(zoneKey));
+        if(target) highlightObject(target);
+    }
+
+    // --- 5. INTEGRAÇÃO COM POWER BI (MÉTODO POSTMESSAGE / SELECTION) ---
+    function sendPowerBiSelection(zoneName) {
+        console.log("Filtro enviado para o Power BI:", zoneName);
+        
+        // Se estiver num HTML Content Visual do Power BI:
+        if (window.parent) {
+            window.parent.postMessage({
+                type: "powerbi-filter",
+                category: "Setor",
+                value: zoneName
+            }, "*");
+        }
+    }
+
+    // Função global executada quando o Power BI atualiza os dados
+    window.updatePowerBIData = function(data) {
+        if(!data) return;
+        if(data.estoque) document.getElementById('kpi-estoque').innerText = data.estoque;
+        if(data.caminhoes) document.getElementById('kpi-caminhoes').innerText = data.caminhoes;
+        if(data.producao) document.getElementById('kpi-producao').innerText = data.producao;
+        if(data.pedidos) document.getElementById('kpi-pedidos').innerText = data.pedidos;
+    };
+
+    // --- 6. LOOP DE ANIMAÇÃO 3D ---
+    function animate() {
+        requestAnimationFrame(animate);
+
+        // Movimento continuo dos itens na esteira
+        animatedItems.forEach(item => {
+            item.position.z += 0.05;
+            if (item.position.z > 9) {
+                item.position.z = -8;
+            }
+        });
+
+        // Rotação suave do Tanque
+        tank.rotation.y += 0.005;
+
+        controls.update();
+        renderer.render(scene, camera);
+    }
+    animate();
+
+    // Redimensionamento responsivo
+    window.addEventListener('resize', () => {
+        const aspect = window.innerWidth / window.innerHeight;
+        camera.left = -d * aspect;
+        camera.right = d * aspect;
+        camera.top = d;
+        camera.bottom = -d;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+</script>
+</body>
+</html>
